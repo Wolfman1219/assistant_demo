@@ -1,0 +1,99 @@
+version: '3'
+
+services:
+  # Main AI assistant application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      - vad-service
+      - trigger-service
+      - stt-service
+      - tts-service
+      - llm-service
+    environment:
+      - PORT=8080
+      - VAD_SERVICE=vad-service:50051
+      - TRIGGER_SERVICE=trigger-service:50052
+      - STT_SERVICE=stt-service:50053
+      - TTS_SERVICE=tts-service:50054
+      - LLM_SERVICE=http://llm-service:8000
+    restart: unless-stopped
+    networks:
+      - ai-network
+
+  # Mock VAD service (replace with actual implementation)
+  vad-service:
+    image: mock-vad-service:latest
+    # This is a placeholder. In a real scenario, you would use your actual VAD service image
+    # For development, you can use a minimal image that runs a simple gRPC server
+    build:
+      context: ./mock-services/vad
+    ports:
+      - "50051:50051"
+    networks:
+      - ai-network
+
+  # Mock Trigger detection service (replace with actual implementation)
+  trigger-service:
+    image: mock-trigger-service:latest
+    # This is a placeholder. In a real scenario, you would use your actual Trigger service image
+    build:
+      context: ./mock-services/trigger
+    ports:
+      - "50052:50052"
+    networks:
+      - ai-network
+
+  # Mock STT service (replace with actual implementation)
+  stt-service:
+    image: mock-stt-service:latest
+    # This is a placeholder. In a real scenario, you would use your actual STT service image
+    build:
+      context: ./mock-services/stt
+    ports:
+      - "50053:50053"
+    networks:
+      - ai-network
+
+  # Mock TTS service (replace with actual implementation)
+  tts-service:
+    image: mock-tts-service:latest
+    # This is a placeholder. In a real scenario, you would use your actual TTS service image
+    build:
+      context: ./mock-services/tts
+    ports:
+      - "50054:50054"
+    networks:
+      - ai-network
+
+  # LLM service (using vLLM with OpenAI-compatible API)
+  llm-service:
+    image: vllm/vllm-openai:latest
+    # This is a placeholder. In a real scenario, you would use your actual LLM service image
+    # For example, you might use vLLM, which provides an OpenAI-compatible API
+    ports:
+      - "8000:8000"
+    environment:
+      - MODEL=mistralai/Mistral-7B-Instruct-v0.2  # Example model
+    volumes:
+      - llm-data:/data
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    networks:
+      - ai-network
+
+networks:
+  ai-network:
+    driver: bridge
+
+volumes:
+  llm-data:

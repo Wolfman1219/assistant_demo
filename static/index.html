@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Go AI Assistant</title>
+    <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>AI Voice Assistant</h1>
+        </header>
+        
+        <main>
+            <div class="assistant-status">
+                <div class="status-indicator" id="status-indicator"></div>
+                <div class="status-text" id="status-text">Initializing...</div>
+            </div>
+            
+            <div class="controls">
+                <button id="start-btn" class="btn primary">Start Listening</button>
+                <button id="stop-btn" class="btn danger" disabled>Stop</button>
+            </div>
+            
+            <div class="transcript-container">
+                <h2>Conversation</h2>
+                <div class="transcript" id="transcript"></div>
+            </div>
+            
+            <div class="debug-info">
+                <h3>Debug Info</h3>
+                <div id="debug-log"></div>
+            </div>
+        </main>
+        
+        <footer>
+            <p>Go AI Assistant &copy; 2025</p>
+        </footer>
+    </div>
+
+    <script src="static/app.js"></script>
+</body>
+</html>

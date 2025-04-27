@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package trigger;
+
+option go_package = "github.com/yourusername/ai-assistant/proto/trigger";
+
+// TriggerService provides wake word detection
+service TriggerService {
+  // Detect determines if the wake word is present in the audio.
+  rpc Detect(DetectRequest) returns (DetectResponse);
+  
+  // DetectStream processes a stream of audio chunks and detects the wake word.
+  rpc DetectStream(stream DetectRequest) returns (stream DetectResponse);
+}
+
+// DetectRequest contains audio data for wake word detection
+message DetectRequest {
+  // Audio data in PCM format
+  bytes audio_data = 1;
+  
+  // Sample rate of the audio in Hz
+  int32 sample_rate = 2;
+  
+  // Number of channels in the audio (1 for mono, 2 for stereo)
+  int32 channels = 3;
+  
+  // Optional: specific wake word to detect (if not provided, uses default)
+  string wake_word = 4;
+}
+
+// DetectResponse contains the result of wake word detection
+message DetectResponse {
+  // Whether the wake word was detected
+  bool is_triggered = 1;
+  
+  // Confidence score between 0.0 and 1.0
+  float confidence = 2;
+  
+  // The wake word that was detected (if multiple are supported)
+  string detected_wake_word = 3;
+}

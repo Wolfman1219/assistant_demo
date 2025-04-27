@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package vad;
+
+option go_package = "github.com/yourusername/ai-assistant/proto/vad";
+
+// VadService provides voice activity detection
+service VadService {
+  // Detect determines if there is voice activity in the audio.
+  rpc Detect(DetectRequest) returns (DetectResponse);
+  
+  // DetectStream processes a stream of audio chunks and detects voice activity.
+  rpc DetectStream(stream DetectRequest) returns (stream DetectResponse);
+}
+
+// DetectRequest contains audio data for voice activity detection
+message DetectRequest {
+  // Audio data in PCM format
+  bytes audio_data = 1;
+  
+  // Sample rate of the audio in Hz
+  int32 sample_rate = 2;
+  
+  // Number of channels in the audio (1 for mono, 2 for stereo)
+  int32 channels = 3;
+}
+
+// DetectResponse contains the result of voice activity detection
+message DetectResponse {
+  // Whether voice activity was detected
+  bool is_active = 1;
+  
+  // Confidence score between 0.0 and 1.0
+  float confidence = 2;
+}

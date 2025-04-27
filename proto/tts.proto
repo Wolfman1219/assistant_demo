@@ -1,0 +1,98 @@
+syntax = "proto3";
+
+package tts;
+
+option go_package = "github.com/yourusername/ai-assistant/proto/tts";
+
+// TtsService provides text-to-speech synthesis
+service TtsService {
+  // Synthesize converts text to speech.
+  rpc Synthesize(SynthesizeRequest) returns (SynthesizeResponse);
+  
+  // SynthesizeStream converts text to a stream of speech audio chunks.
+  rpc SynthesizeStream(SynthesizeRequest) returns (stream SynthesizeResponse);
+}
+
+// SynthesizeRequest contains text to synthesize
+message SynthesizeRequest {
+  // Text to be synthesized
+  string text = 1;
+  
+  // Language code (e.g., "en-US")
+  string language_code = 2;
+  
+  // Voice name
+  string voice_name = 3;
+  
+  // Audio configuration
+  AudioConfig audio_config = 4;
+}
+
+// AudioConfig contains configuration for the synthesized audio
+message AudioConfig {
+  // Audio encoding format
+  AudioEncoding audio_encoding = 1;
+  
+  // Speaking rate (1.0 is normal speed, 0.5 is half speed, 2.0 is double speed)
+  float speaking_rate = 2;
+  
+  // Pitch (0.0 is normal pitch, -10.0 to 10.0)
+  float pitch = 3;
+  
+  // Volume gain in dB (-96.0 to 16.0)
+  float volume_gain_db = 4;
+  
+  // Sample rate in Hz
+  int32 sample_rate_hertz = 5;
+}
+
+// AudioEncoding defines the audio encoding format
+enum AudioEncoding {
+  // Not specified
+  AUDIO_ENCODING_UNSPECIFIED = 0;
+  
+  // Linear PCM (16-bit signed little-endian)
+  LINEAR16 = 1;
+  
+  // MP3
+  MP3 = 2;
+  
+  // Opus encoded audio in Ogg container
+  OGG_OPUS = 3;
+  
+  // FLAC
+  FLAC = 4;
+  
+  // MULAW
+  MULAW = 5;
+}
+
+// SynthesizeResponse contains the synthesized audio
+message SynthesizeResponse {
+  // Audio data in the format specified in the request
+  bytes audio_content = 1;
+  
+  // Timing information for the synthesized audio
+  TimingInfo timing_info = 2;
+}
+
+// TimingInfo contains timing information for the synthesized audio
+message TimingInfo {
+  // Total audio duration in seconds
+  double total_duration_seconds = 1;
+  
+  // Word-level timing information
+  repeated WordTiming word_timings = 2;
+}
+
+// WordTiming contains timing information for a word
+message WordTiming {
+  // The word
+  string word = 1;
+  
+  // Start time in seconds
+  double start_time = 2;
+  
+  // End time in seconds
+  double end_time = 3;
+}

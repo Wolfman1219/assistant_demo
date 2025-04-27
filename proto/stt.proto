@@ -1,0 +1,101 @@
+syntax = "proto3";
+
+package stt;
+
+option go_package = "github.com/yourusername/ai-assistant/proto/stt";
+
+// SttService provides speech-to-text transcription
+service SttService {
+  // Transcribe converts audio to text.
+  rpc Transcribe(TranscribeRequest) returns (TranscribeResponse);
+  
+  // TranscribeStream processes a stream of audio chunks and returns a stream of transcription results.
+  rpc TranscribeStream(stream TranscribeRequest) returns (stream TranscribeResponse);
+}
+
+// TranscribeRequest contains audio data for transcription
+message TranscribeRequest {
+  // Audio data in PCM format
+  bytes audio_data = 1;
+  
+  // Sample rate of the audio in Hz
+  int32 sample_rate = 2;
+  
+  // Number of channels in the audio (1 for mono, 2 for stereo)
+  int32 channels = 3;
+  
+  // Language code (e.g., "en-US")
+  string language_code = 4;
+  
+  // Optional: additional configuration parameters
+  TranscribeConfig config = 5;
+}
+
+// TranscribeConfig contains additional configuration for transcription
+message TranscribeConfig {
+  // Enable interim results (partial transcriptions)
+  bool enable_interim_results = 1;
+  
+  // Maximum number of alternatives to return
+  int32 max_alternatives = 2;
+  
+  // Enable automatic punctuation
+  bool enable_automatic_punctuation = 3;
+  
+  // Enable word timestamps
+  bool enable_word_timestamps = 4;
+  
+  // Enable speaker diarization
+  bool enable_speaker_diarization = 5;
+  
+  // Filter profanity
+  bool filter_profanity = 6;
+}
+
+// TranscribeResponse contains the result of transcription
+message TranscribeResponse {
+  // Full transcript
+  string transcript = 1;
+  
+  // Whether this is a final result or an interim result
+  bool is_final = 2;
+  
+  // Confidence score between 0.0 and 1.0
+  float confidence = 3;
+  
+  // Alternative transcripts
+  repeated TranscriptAlternative alternatives = 4;
+  
+  // Detected language code
+  string language_code = 5;
+  
+  // Word-level information if requested
+  repeated WordInfo words = 6;
+}
+
+// TranscriptAlternative contains an alternative transcript
+message TranscriptAlternative {
+  // Transcript text
+  string transcript = 1;
+  
+  // Confidence score between 0.0 and 1.0
+  float confidence = 2;
+}
+
+// WordInfo contains information about a word in the transcript
+message WordInfo {
+  // The word
+  string word = 1;
+  
+  // Start time in seconds
+  double start_time = 2;
+  
+  // End time in seconds
+  double end_time = 3;
+  
+  // Confidence score between 0.0 and 1.0
+  float confidence = 4;
+  
+  // Speaker tag if speaker diarization is enabled
+  int32 speaker_tag = 5;
+}
