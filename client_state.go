@@ -74,6 +74,9 @@ func NewClientState(conn *websocket.Conn, app *App) *ClientState {
 }
 
 // handleClient handles the WebSocket connection for a client
+// Update in handleClient in client_state.go
+
+// handleClient handles the WebSocket connection for a client
 func (cs *ClientState) handleClient() {
 	defer func() {
 		cs.app.removeClient(cs.conn)
@@ -83,8 +86,8 @@ func (cs *ClientState) handleClient() {
 	// Send initial status
 	cs.sendStatus(StateIdle, "Ready")
 
-	// Start the parallel VAD/Trigger detection
-	cs.startVadTriggerDetection()
+	// Start processing VAD events
+	cs.startProcessingVadEvents()
 
 	// Handle incoming messages
 	for {
@@ -114,23 +117,17 @@ func (cs *ClientState) handleAudioData(audioData []byte) {
 	copy(dataCopy, audioData)
 
 	// Store audio in buffer for STT if needed
-	cs.audioBufferMutex.Lock()
-	cs.audioBuffer = append(cs.audioBuffer, dataCopy)
-	cs.audioBufferMutex.Unlock()
+	if cs.getState() == StateTriggered {
+		cs.audioBufferMutex.Lock()
+		cs.audioBuffer = append(cs.audioBuffer, dataCopy)
+		cs.audioBufferMutex.Unlock()
+	}
 
-	// Current state affects what we do with the audio
-	currentState := cs.getState()
-
-	switch currentState {
-	case StateTriggered:
-		// In triggered state, we collect audio for STT
-		// The audio is already being appended to the buffer above
-
-		// Check if end of speech is detected
-		if cs.vadActive && !cs.app.vadClient.IsActive(audioData) {
-			// End of speech detected, process the collected audio
-			cs.vadActive = false
-			go cs.processAudio()
+	// Always send audio to VAD
+	if cs.app.vadClient != nil {
+		err := cs.app.vadClient.ProcessAudio(dataCopy)
+		if err != nil {
+			log.Printf("Error sending audio to VAD: %v", err)
 		}
 	}
 }
@@ -151,6 +148,68 @@ func (cs *ClientState) handleTextCommand(command string) {
 		cs.cancelAllOperations()
 		cs.resetState()
 	}
+}
+
+// Add to client_state.go
+
+// startProcessingVadEvents starts processing VAD events
+func (cs *ClientState) startProcessingVadEvents() {
+	if cs.app.vadClient == nil {
+		log.Println("VAD client is not available")
+		return
+	}
+
+	// Get the event channel
+	eventChan := cs.app.vadClient.GetEventChannel()
+
+	// Start a goroutine to process VAD events
+	go func() {
+		for {
+			select {
+			case event, ok := <-eventChan:
+				if !ok {
+					// Channel closed
+					return
+				}
+
+				// Process the VAD event
+				switch event.Type {
+				case "start":
+					cs.vadActive = true
+					log.Printf("VAD event: Speech started - %s", event.Message)
+
+					// If we're in IDLE state, check for trigger
+					if cs.getState() == StateIdle {
+						// This is where we would trigger wake word detection
+						// For now, let's just simulate a trigger with a probability
+						if cs.app.triggerClient != nil && cs.app.triggerClient.IsTriggered(nil) {
+							cs.triggered = true
+							cs.setState(StateTriggered)
+							cs.sendStatus(StateTriggered, "Listening to you...")
+
+							// Clear the audio buffer to start fresh
+							cs.audioBufferMutex.Lock()
+							cs.audioBuffer = make([][]byte, 0)
+							cs.audioBufferMutex.Unlock()
+						}
+					}
+
+				case "end":
+					cs.vadActive = false
+					log.Printf("VAD event: Speech ended - %s", event.Message)
+
+					// If we're in TRIGGERED state, process the collected audio
+					if cs.getState() == StateTriggered {
+						go cs.processAudio()
+					}
+
+				case "continue":
+					// Just log for debugging
+					log.Printf("VAD event: Speech continuing - %s", event.Message)
+				}
+			}
+		}
+	}()
 }
 
 // startVadTriggerDetection starts the parallel VAD/Trigger detection process

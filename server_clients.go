@@ -5,8 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
+	"sync"
 	"time"
+
+	pb "assistant-app/grpc_modules"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -18,7 +23,16 @@ import (
 // VadClient is the interface for the Voice Activity Detection client
 type VadClient interface {
 	IsActive(audioData []byte) bool
+	ProcessAudio(audioData []byte) error
+	ResetVAD() error
+	GetEventChannel() <-chan VadEvent
 	Close() error
+}
+
+// VadEvent represents an event from the VAD service
+type VadEvent struct {
+	Type    string // "start", "continue", "end"
+	Message string
 }
 
 // TriggerClient is the interface for the Trigger Detection client
@@ -45,61 +59,162 @@ type TtsClient interface {
 }
 
 // Implementation of the VAD client
-
-type vadClientImpl struct {
-	conn *grpc.ClientConn
-	// Add the generated gRPC client here once you have the proto files
-	// client proto.VadServiceClient
-}
-
-// NewVadClient creates a new VAD client
-func NewVadClient(addr string) (VadClient, error) {
-	// Connect to the gRPC server
-	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to VAD service: %w", err)
-	}
-
-	// Create the client
-	client := &vadClientImpl{
-		conn: conn,
-		// Initialize the generated client
-		// client: proto.NewVadServiceClient(conn),
-	}
-
-	return client, nil
+type VadClientImpl struct {
+	conn         *grpc.ClientConn
+	client       pb.VADServiceClient
+	stream       pb.VADService_ProcessAudioClient
+	ctx          context.Context
+	cancel       context.CancelFunc
+	eventChan    chan VadEvent
+	speechActive bool         // Track if speech is active
+	speechMutex  sync.RWMutex // Mutex to protect speechActive
 }
 
 // IsActive checks if the audio data contains voice activity
-func (c *vadClientImpl) IsActive(audioData []byte) bool {
-	// Mock implementation - in a real system, this would send the audio to the gRPC service
-	// and get a response
-
-	// For now, just return true if the audio has enough energy
-	// This is a very naive implementation - a real VAD would be much more sophisticated
-	sum := 0
-	for i := 0; i < len(audioData); i += 2 {
-		if i+1 < len(audioData) {
-			// Convert bytes to int16
-			sample := int16(audioData[i]) | (int16(audioData[i+1]) << 8)
-			if sample < 0 {
-				sample = -sample
-			}
-			sum += int(sample)
-		}
+// It sends the audio and returns the current speech activity state
+func (c *VadClientImpl) IsActive(audioData []byte) bool {
+	// Send the audio data if provided
+	if audioData != nil {
+		_ = c.ProcessAudio(audioData) // Ignore error for simplicity
 	}
 
-	// Average energy
-	avg := sum / (len(audioData) / 2)
+	// Return the current speech activity state
+	c.speechMutex.RLock()
+	defer c.speechMutex.RUnlock()
+	return c.speechActive
+}
 
-	// Threshold for activity
-	threshold := 500
+// Update the receiveResponses function to maintain speech activity state
+func (c *VadClientImpl) receiveResponses() {
+	for {
+		select {
+		case <-c.ctx.Done():
+			return
+		default:
+			resp, err := c.stream.Recv()
+			if err == io.EOF {
+				log.Println("VAD stream closed by server")
+				return
+			}
+			if err != nil {
+				log.Printf("Error receiving VAD response: %v", err)
+				// Try to reconnect
+				c.stream = nil
+				return
+			}
 
-	return avg > threshold
+			// Process the VAD response
+			event := resp.GetEvent()
+			message := resp.GetMessage()
+
+			// Update speech activity state
+			c.speechMutex.Lock()
+			if event == "start" {
+				c.speechActive = true
+			} else if event == "end" {
+				c.speechActive = false
+			}
+			c.speechMutex.Unlock()
+
+			// Send event to channel
+			select {
+			case c.eventChan <- VadEvent{Type: event, Message: message}:
+				// Event sent successfully
+			default:
+				// Channel buffer is full, log and continue
+				log.Printf("VAD event channel full, discarding: %s - %s", event, message)
+			}
+		}
+	}
+}
+
+// NewVadClient creates a new VAD client that connects to the VAD gRPC service
+func NewVadClient(addr string) (VadClient, error) {
+	// Create context with cancel
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Connect to the gRPC server
+	conn, err := grpc.Dial(addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("failed to connect to VAD service: %w", err)
+	}
+
+	// Create the gRPC client
+	client := pb.NewVADServiceClient(conn)
+
+	// Create a bidirectional stream
+	stream, err := client.ProcessAudio(ctx)
+	if err != nil {
+		cancel()
+		conn.Close()
+		return nil, fmt.Errorf("failed to create VAD stream: %w", err)
+	}
+
+	// Create event channel
+	eventChan := make(chan VadEvent, 100) // Buffered channel to avoid blocking
+
+	vadClient := &VadClientImpl{
+		conn:         conn,
+		client:       client,
+		stream:       stream,
+		ctx:          ctx,
+		cancel:       cancel,
+		eventChan:    eventChan,
+		speechActive: false,
+		speechMutex:  sync.RWMutex{},
+	}
+
+	// Start a goroutine to receive VAD responses
+	go vadClient.receiveResponses()
+
+	return vadClient, nil
+}
+
+// ProcessAudio sends audio data to the VAD service
+func (c *VadClientImpl) ProcessAudio(audioData []byte) error {
+	if c.stream == nil {
+		log.Println("VAD stream is nil, reconnecting...")
+		stream, err := c.client.ProcessAudio(c.ctx)
+		if err != nil {
+			return fmt.Errorf("failed to recreate VAD stream: %w", err)
+		}
+		c.stream = stream
+
+		// Restart the receiver goroutine
+		go c.receiveResponses()
+	}
+
+	// Send the audio chunk to the VAD service
+	err := c.stream.Send(&pb.AudioChunk{AudioData: audioData})
+	if err != nil {
+		return fmt.Errorf("error sending audio to VAD service: %w", err)
+	}
+
+	return nil
+}
+
+// receiveResponses handles responses from the VAD service
+// Duplicate method removed to resolve the compile error.
+
+// GetEventChannel returns the VAD event channel
+func (c *VadClientImpl) GetEventChannel() <-chan VadEvent {
+	return c.eventChan
+}
+
+// ResetVAD resets the VAD state
+func (c *VadClientImpl) ResetVAD() error {
+	_, err := c.client.ResetVAD(c.ctx, &pb.ResetRequest{})
+	return err
 }
 
 // Close closes the VAD client
-func (c *vadClientImpl) Close() error {
+func (c *VadClientImpl) Close() error {
+	c.cancel()
+	if c.stream != nil {
+		c.stream.CloseSend()
+	}
+	close(c.eventChan)
 	if c.conn != nil {
 		return c.conn.Close()
 	}
