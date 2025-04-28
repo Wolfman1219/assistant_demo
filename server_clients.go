@@ -195,7 +195,7 @@ func (c *VadClientImpl) ProcessAudio(audioData []byte) error {
 	c.audioBuffer = append(c.audioBuffer, audioData...)
 
 	// Process complete chunks of 512 samples (1024 bytes for 16-bit samples)
-	const VAD_CHUNK_SIZE_BYTES = 512 * 2 // 512 samples * 2 bytes per sample (16-bit)
+	const VAD_CHUNK_SIZE_BYTES = 2048 * 2 // 512 samples * 2 bytes per sample (16-bit)
 
 	// Process as many complete chunks as possible
 	for len(c.audioBuffer) >= VAD_CHUNK_SIZE_BYTES {
