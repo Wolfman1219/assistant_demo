@@ -93,6 +93,7 @@ func (cs *ClientState) handleClient() {
 	for {
 		// Read message from WebSocket
 		messageType, message, err := cs.conn.ReadMessage()
+
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				log.Printf("WebSocket error: %v", err)
@@ -169,6 +170,7 @@ func (cs *ClientState) startProcessingVadEvents() {
 			case event, ok := <-eventChan:
 				if !ok {
 					// Channel closed
+					log.Println("VAD event channel closed not ok")
 					return
 				}
 

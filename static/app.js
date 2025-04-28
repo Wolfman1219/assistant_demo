@@ -146,63 +146,50 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Audio processing functions
+    // In the browser code that initializes the AudioContext
     async function initAudio() {
-        try {
-            // Request microphone access
-            mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            
-            // Create audio context without specifying sample rate
-            audioContext = new (window.AudioContext || window.webkitAudioContext)();
-            
-            // Create source node from microphone
-            sourceNode = audioContext.createMediaStreamSource(mediaStream);
-            
-            // Log the actual sample rate for debugging
-            log(`Audio context sample rate: ${audioContext.sampleRate}Hz (Target: ${SAMPLE_RATE}Hz)`);
-            
-            // Create processor node
-            if (window.AudioWorkletNode) {
-                // Modern browsers: use AudioWorklet
-                await audioContext.audioWorklet.addModule('static/audio-processor.js');
-                processorNode = new AudioWorkletNode(audioContext, 'audio-processor', {
-                    processorOptions: {
-                        sampleRate: audioContext.sampleRate,
-                        targetSampleRate: SAMPLE_RATE
-                    }
-                });
-                
-                // Set up message handling from the processor
-                processorNode.port.onmessage = (event) => {
-                    if (event.data.audioChunk && isConnected && isListening) {
-                        socket.send(event.data.audioChunk);
-                    }
-                };
-            } else {
-                // Fallback for older browsers: ScriptProcessorNode
-                processorNode = audioContext.createScriptProcessor(BUFFER_SIZE, 1, 1);
-                
-                processorNode.onaudioprocess = (e) => {
-                    if (isConnected && isListening) {
-                        const inputData = e.inputBuffer.getChannelData(0);
-                        
-                        // Convert to 16-bit PCM
-                        const pcmData = convertFloat32ToInt16(inputData);
-                        socket.send(pcmData.buffer);
-                    }
-                };
-                
-                // Connect the processor to the destination to activate it
-                processorNode.connect(audioContext.destination);
+    try {
+        // Attempt to get a mono audio stream
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+                channelCount: 1,         // Request mono
+                sampleRate: 16000,       // Request 16kHz
+                echoCancellation: true,  // Optional but useful
+                noiseSuppression: true   // Optional but useful
             }
-            
-            log('Audio system initialized');
-            return true;
-        } catch (error) {
-            log(`Error initializing audio: ${error}`);
-            updateStatus('ERROR', 'Microphone access denied');
-            return false;
-        }
+        });
+        
+        // Create the AudioContext
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        
+        // Create processor node
+        await audioContext.audioWorklet.addModule('static/audio-processor.js');
+        processorNode = new AudioWorkletNode(audioContext, 'audio-processor', {
+            processorOptions: {
+                sampleRate: audioContext.sampleRate,
+                targetSampleRate: 16000  // Target 16kHz for VAD
+            }
+        });
+        
+        // Log the audio context sample rate
+        console.log(`Audio context sample rate: ${audioContext.sampleRate}Hz`);
+        
+        // Set up message handling
+        processorNode.port.onmessage = (event) => {
+            if (event.data.audioChunk && isConnected && isListening) {
+                socket.send(event.data.audioChunk);
+            }
+        };
+        
+        // Create source node from microphone
+        sourceNode = audioContext.createMediaStreamSource(mediaStream);
+        
+        return true;
+    } catch (error) {
+        console.error('Error initializing audio:', error);
+        return false;
     }
+}
 
     function startListening() {
         if (!isConnected) {

@@ -1,4 +1,5 @@
 // audio-processor.js
+// This is what we should have in static/audio-processor.js
 class AudioProcessor extends AudioWorkletProcessor {
     constructor(options) {
         super();
@@ -15,7 +16,7 @@ class AudioProcessor extends AudioWorkletProcessor {
     }
 
     process(inputs, outputs, parameters) {
-        // Get the input data from channel 0
+        // Get the input data from channel 0 (mono)
         const input = inputs[0][0];
 
         if (!input) return true;

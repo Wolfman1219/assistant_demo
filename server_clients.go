@@ -21,6 +21,7 @@ import (
 // These make it easier to test and mock the services
 
 // VadClient is the interface for the Voice Activity Detection client
+// VadClient is the interface for the Voice Activity Detection client
 type VadClient interface {
 	IsActive(audioData []byte) bool
 	ProcessAudio(audioData []byte) error
@@ -66,8 +67,10 @@ type VadClientImpl struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	eventChan    chan VadEvent
-	speechActive bool         // Track if speech is active
-	speechMutex  sync.RWMutex // Mutex to protect speechActive
+	speechActive bool
+	speechMutex  sync.RWMutex
+	audioBuffer  []byte     // Buffer to accumulate audio samples
+	bufferMutex  sync.Mutex // Mutex for the audio buffer
 }
 
 // IsActive checks if the audio data contains voice activity
@@ -87,11 +90,15 @@ func (c *VadClientImpl) IsActive(audioData []byte) bool {
 // Update the receiveResponses function to maintain speech activity state
 func (c *VadClientImpl) receiveResponses() {
 	for {
+		fmt.Println("Waiting for VAD response...")
 		select {
 		case <-c.ctx.Done():
+			log.Println("VAD client context cancelled, stopping response receiver")
 			return
 		default:
+
 			resp, err := c.stream.Recv()
+
 			if err == io.EOF {
 				log.Println("VAD stream closed by server")
 				return
@@ -107,9 +114,10 @@ func (c *VadClientImpl) receiveResponses() {
 			event := resp.GetEvent()
 			message := resp.GetMessage()
 
+			fmt.Printf("Received VAD event: %s - %s\n", event, message)
 			// Update speech activity state
 			c.speechMutex.Lock()
-			if event == "start" {
+			if event == "start" || event == "continue" {
 				c.speechActive = true
 			} else if event == "end" {
 				c.speechActive = false
@@ -163,6 +171,8 @@ func NewVadClient(addr string) (VadClient, error) {
 		eventChan:    eventChan,
 		speechActive: false,
 		speechMutex:  sync.RWMutex{},
+		audioBuffer:  make([]byte, 0, 4096), // Initial capacity
+		bufferMutex:  sync.Mutex{},
 	}
 
 	// Start a goroutine to receive VAD responses
@@ -173,6 +183,37 @@ func NewVadClient(addr string) (VadClient, error) {
 
 // ProcessAudio sends audio data to the VAD service
 func (c *VadClientImpl) ProcessAudio(audioData []byte) error {
+	if audioData == nil || len(audioData) == 0 {
+		return nil
+	}
+
+	// Lock the buffer for writing
+	c.bufferMutex.Lock()
+	defer c.bufferMutex.Unlock()
+
+	// Add incoming audio to the buffer
+	c.audioBuffer = append(c.audioBuffer, audioData...)
+
+	// Process complete chunks of 512 samples (1024 bytes for 16-bit samples)
+	const VAD_CHUNK_SIZE_BYTES = 512 * 2 // 512 samples * 2 bytes per sample (16-bit)
+
+	// Process as many complete chunks as possible
+	for len(c.audioBuffer) >= VAD_CHUNK_SIZE_BYTES {
+		// Extract a chunk
+		chunk := c.audioBuffer[:VAD_CHUNK_SIZE_BYTES]
+		c.audioBuffer = c.audioBuffer[VAD_CHUNK_SIZE_BYTES:]
+
+		// Send the chunk to the VAD service
+		if err := c.sendChunkToVAD(chunk); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (c *VadClientImpl) sendChunkToVAD(chunk []byte) error {
+	// Make sure we have a valid stream
 	if c.stream == nil {
 		log.Println("VAD stream is nil, reconnecting...")
 		stream, err := c.client.ProcessAudio(c.ctx)
@@ -185,17 +226,14 @@ func (c *VadClientImpl) ProcessAudio(audioData []byte) error {
 		go c.receiveResponses()
 	}
 
-	// Send the audio chunk to the VAD service
-	err := c.stream.Send(&pb.AudioChunk{AudioData: audioData})
+	// Send the chunk to the VAD service
+	err := c.stream.Send(&pb.AudioChunk{AudioData: chunk})
 	if err != nil {
 		return fmt.Errorf("error sending audio to VAD service: %w", err)
 	}
 
 	return nil
 }
-
-// receiveResponses handles responses from the VAD service
-// Duplicate method removed to resolve the compile error.
 
 // GetEventChannel returns the VAD event channel
 func (c *VadClientImpl) GetEventChannel() <-chan VadEvent {
@@ -207,6 +245,8 @@ func (c *VadClientImpl) ResetVAD() error {
 	_, err := c.client.ResetVAD(c.ctx, &pb.ResetRequest{})
 	return err
 }
+
+// Close closes the VAD client
 
 // Close closes the VAD client
 func (c *VadClientImpl) Close() error {
@@ -296,6 +336,7 @@ func (c *sttClientImpl) Transcribe(ctx context.Context, audioBuffer [][]byte) (s
 	// and get a response
 
 	// For demo purposes, just return a fixed transcript
+
 	return "Hello, how can I help you today?", nil
 }
 
