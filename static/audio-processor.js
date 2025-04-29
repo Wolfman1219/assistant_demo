@@ -1,4 +1,3 @@
-// audio-processor.js
 // This is what we should have in static/audio-processor.js
 class AudioProcessor extends AudioWorkletProcessor {
     constructor(options) {
@@ -14,34 +13,64 @@ class AudioProcessor extends AudioWorkletProcessor {
         
         console.log(`AudioProcessor initialized: sampleRate=${this.sampleRate}, targetSampleRate=${this.targetSampleRate}`);
     }
-
+    downsampleBuffer(buffer, inputSampleRate, outputSampleRate) {
+        if (inputSampleRate === outputSampleRate) {
+            return buffer;
+        }
+    
+        const sampleRateRatio = inputSampleRate / outputSampleRate;
+        const newLength = Math.round(buffer.length / sampleRateRatio);
+        const downsampledBuffer = new Float32Array(newLength);
+    
+        let offset = 0;
+        for (let i = 0; i < newLength; i++) {
+            const nextOffset = Math.round((i + 1) * sampleRateRatio);
+            let sum = 0;
+            let count = 0;
+    
+            for (let j = offset; j < nextOffset && j < buffer.length; j++) {
+                sum += buffer[j];
+                count++;
+            }
+    
+            downsampledBuffer[i] = sum / count;
+            offset = nextOffset;
+        }
+    
+        return downsampledBuffer;
+    }
     process(inputs, outputs, parameters) {
-        // Get the input data from channel 0 (mono)
         const input = inputs[0][0];
-
+    
         if (!input) return true;
-
-        // Copy input data to our buffer
+    
         for (let i = 0; i < input.length; i++) {
             this.buffer[this.bufferIndex++] = input[i];
-
-            // If the buffer is full, send it and reset
+    
             if (this.bufferIndex >= this.bufferSize) {
-                // Convert the float audio data to 16-bit PCM
-                const pcmData = this.convertFloat32ToInt16(this.buffer);
-                
-                // Send the audio chunk to the main thread
-                this.port.postMessage({
-                    audioChunk: pcmData.buffer
-                }, [pcmData.buffer]); // Transfer ownership for better performance
-                
-                // Reset the buffer
+                let processedBuffer = this.buffer;
+    
+                // Downsample if needed
+                if (this.needsResampling) {
+                    processedBuffer = this.downsampleBuffer(
+                        this.buffer,
+                        this.sampleRate,
+                        this.targetSampleRate
+                    );
+                }
+    
+                const pcmData = this.convertFloat32ToInt16(processedBuffer);
+    
+                this.port.postMessage(
+                    { audioChunk: pcmData.buffer },
+                    [pcmData.buffer]
+                );
+    
                 this.buffer = new Float32Array(this.bufferSize);
                 this.bufferIndex = 0;
             }
         }
-
-        // Return true to keep the processor alive
+    
         return true;
     }
 

@@ -147,49 +147,43 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Audio processing functions
     // In the browser code that initializes the AudioContext
+ // In the browser code that initializes the AudioContext
     async function initAudio() {
-    try {
-        // Attempt to get a mono audio stream
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-                channelCount: 1,         // Request mono
-                sampleRate: 16000,       // Request 16kHz
-                echoCancellation: true,  // Optional but useful
-                noiseSuppression: true   // Optional but useful
-            }
-        });
-        
-        // Create the AudioContext
-        audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        
-        // Create processor node
-        await audioContext.audioWorklet.addModule('static/audio-processor.js');
-        processorNode = new AudioWorkletNode(audioContext, 'audio-processor', {
-            processorOptions: {
-                sampleRate: audioContext.sampleRate,
-                targetSampleRate: 16000  // Target 16kHz for VAD
-            }
-        });
-        
-        // Log the audio context sample rate
-        console.log(`Audio context sample rate: ${audioContext.sampleRate}Hz`);
-        
-        // Set up message handling
-        processorNode.port.onmessage = (event) => {
-            if (event.data.audioChunk && isConnected && isListening) {
-                socket.send(event.data.audioChunk);
-            }
-        };
-        
-        // Create source node from microphone
-        sourceNode = audioContext.createMediaStreamSource(mediaStream);
-        
-        return true;
-    } catch (error) {
-        console.error('Error initializing audio:', error);
-        return false;
+        try {
+            // Attempt to get a mono audio stream
+            mediaStream = await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    channelCount: 1,         // Request mono
+                    sampleRate: 16000,       // Request 16kHz
+                }
+            });
+            
+            // Create the AudioContext
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            
+            // Create processor node
+            await audioContext.audioWorklet.addModule('static/audio-processor.js');
+            processorNode = new AudioWorkletNode(audioContext, 'audio-processor');
+            
+            // Log the audio context sample rate
+            console.log(`Audio context sample rate: ${audioContext.sampleRate}Hz`);
+            
+            // Set up message handling
+            processorNode.port.onmessage = (event) => {
+                if (event.data.audioChunk && isConnected && isListening) {
+                    socket.send(event.data.audioChunk);
+                }
+            };
+            
+            // Create source node from microphone
+            sourceNode = audioContext.createMediaStreamSource(mediaStream);
+            
+            return true;
+        } catch (error) {
+            console.error('Error initializing audio:', error);
+            return false;
+        }
     }
-}
 
     function startListening() {
         if (!isConnected) {
