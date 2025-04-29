@@ -1,43 +1,73 @@
 // audio-processor.js
-// This is what we should have in static/audio-processor.js
 class AudioProcessor extends AudioWorkletProcessor {
     constructor(options) {
         super();
+        // Get sample rates from options or use defaults
         this.sampleRate = options.processorOptions?.sampleRate || 48000;
         this.targetSampleRate = options.processorOptions?.targetSampleRate || 16000;
-        this.bufferSize = 2048;
-        this.buffer = new Float32Array(this.bufferSize);
+        
+        // Fixed buffer size that VAD expects
+        this.targetBufferSize = 512; // This is what Silero VAD expects
+        
+        // Create buffer to hold audio samples
+        this.buffer = new Float32Array(this.targetBufferSize);
         this.bufferIndex = 0;
         
-        // We'll need to do downsampling if the rates don't match
+        // Calculate resampling ratio
+        this.resampleRatio = this.targetSampleRate / this.sampleRate;
         this.needsResampling = this.sampleRate !== this.targetSampleRate;
         
-        console.log(`AudioProcessor initialized: sampleRate=${this.sampleRate}, targetSampleRate=${this.targetSampleRate}`);
+        // Track our position for resampling
+        this.resamplePos = 0;
+        
+        console.log(`AudioProcessor initialized: sampleRate=${this.sampleRate}, targetSampleRate=${this.targetSampleRate}, ratio=${this.resampleRatio}`);
     }
 
     process(inputs, outputs, parameters) {
-        // Get the input data from channel 0 (mono)
-        const input = inputs[0][0];
+        // Get the input data from channel 0
+        const input = inputs[0]?.[0];
 
-        if (!input) return true;
+        if (!input || input.length === 0) return true;
 
-        // Copy input data to our buffer
-        for (let i = 0; i < input.length; i++) {
-            this.buffer[this.bufferIndex++] = input[i];
-
-            // If the buffer is full, send it and reset
-            if (this.bufferIndex >= this.bufferSize) {
-                // Convert the float audio data to 16-bit PCM
-                const pcmData = this.convertFloat32ToInt16(this.buffer);
+        if (this.needsResampling) {
+            // Perform simple linear resampling
+            while (this.resamplePos < input.length && this.bufferIndex < this.targetBufferSize) {
+                // Get the current position in the input (might be fractional)
+                const inputPos = Math.floor(this.resamplePos);
+                const fraction = this.resamplePos - inputPos;
                 
-                // Send the audio chunk to the main thread
-                this.port.postMessage({
-                    audioChunk: pcmData.buffer
-                }, [pcmData.buffer]); // Transfer ownership for better performance
+                // Get the current and next sample (if available)
+                const currentSample = input[inputPos];
+                const nextSample = (inputPos + 1 < input.length) ? input[inputPos + 1] : currentSample;
                 
-                // Reset the buffer
-                this.buffer = new Float32Array(this.bufferSize);
-                this.bufferIndex = 0;
+                // Linear interpolation between samples
+                const interpolatedSample = currentSample + fraction * (nextSample - currentSample);
+                
+                // Add to buffer
+                this.buffer[this.bufferIndex++] = interpolatedSample;
+                
+                // Move position according to ratio
+                this.resamplePos += 1 / this.resampleRatio;
+                
+                // If we've reached the end of the input, reset position
+                if (this.resamplePos >= input.length) {
+                    this.resamplePos = this.resamplePos - input.length;
+                }
+                
+                // If buffer is full, send it
+                if (this.bufferIndex >= this.targetBufferSize) {
+                    this.sendBuffer();
+                }
+            }
+        } else {
+            // No resampling needed, just copy directly
+            for (let i = 0; i < input.length; i++) {
+                this.buffer[this.bufferIndex++] = input[i];
+                
+                // If buffer is full, send it
+                if (this.bufferIndex >= this.targetBufferSize) {
+                    this.sendBuffer();
+                }
             }
         }
 
@@ -45,16 +75,25 @@ class AudioProcessor extends AudioWorkletProcessor {
         return true;
     }
 
-    convertFloat32ToInt16(float32Array) {
-        const int16Array = new Int16Array(float32Array.length);
-        
-        for (let i = 0; i < float32Array.length; i++) {
-            // Clamp the value between -1 and 1, and scale to -32768 to 32767
-            const s = Math.max(-1, Math.min(1, float32Array[i]));
-            int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+    sendBuffer() {
+        // Only send complete buffers
+        if (this.bufferIndex < this.targetBufferSize) {
+            return;
         }
         
-        return int16Array;
+        // Convert the float audio data to 16-bit PCM
+        const int16Array = new Int16Array(this.targetBufferSize);
+        for (let i = 0; i < this.targetBufferSize; i++) {
+            // Clamp the value between -1 and 1, and scale to -32768 to 32767
+            const sample = Math.max(-1, Math.min(1, this.buffer[i]));
+            int16Array[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+        }
+        
+        // Send the audio chunk to the main thread
+        this.port.postMessage(int16Array, [int16Array.buffer]);
+        
+        // Reset the buffer
+        this.bufferIndex = 0;
     }
 }
 
